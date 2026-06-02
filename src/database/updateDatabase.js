@@ -15,6 +15,9 @@ export async function updateDatabase(db) {
     const staleCleanup = await cleanupStaleSettings(db);
     results.push({ name: '废弃 settings key 清理', ...staleCleanup });
     
+    const dropAggregated = await dropMetricsAggregatedTable(db);
+    results.push({ name: '删除弃用的 metrics_aggregated 表', ...dropAggregated });
+    
     console.log('✅ 数据库更新完成');
     
     return {
@@ -110,6 +113,26 @@ async function addHistoryColumns(db) {
     return { success: true, added };
   } catch (e) {
     console.error('添加 metrics_history 表列失败:', e);
+    return { success: false, error: e.message };
+  }
+}
+
+async function dropMetricsAggregatedTable(db) {
+  console.log('开始删除弃用的 metrics_aggregated 表...');
+  try {
+    const { results: tables } = await db.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_aggregated'`
+    ).all();
+    
+    if (tables.length === 0) {
+      return { success: true, dropped: 0, message: '无需删除（表不存在）' };
+    }
+    
+    await db.prepare(`DROP TABLE metrics_aggregated`).run();
+    console.log('✅ 已删除 metrics_aggregated 表');
+    return { success: true, dropped: 1, message: '已删除 metrics_aggregated 表' };
+  } catch (e) {
+    console.error('删除 metrics_aggregated 表失败:', e);
     return { success: false, error: e.message };
   }
 }
