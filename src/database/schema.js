@@ -5,6 +5,7 @@ import {
   getMetricsHistoryCache,
   setMetricsHistoryCache
 } from '../utils/cache.js';
+import { clearSiteSettingsCache } from '../utils/settings.js';
 
 let dbInitialized = false;
 
@@ -105,6 +106,9 @@ export async function rebuildDatabase(db) {
   try {
     await db.prepare(`DROP TABLE IF EXISTS metrics_history`).run();
     console.log('✅ 已删除 metrics_history 表');
+
+    await db.prepare(`DROP TABLE IF EXISTS metrics_history_old`).run();
+    console.log('✅ 已删除 metrics_history_old 表');
     
     await db.prepare(`DROP TABLE IF EXISTS servers`).run();
     console.log('✅ 已删除 servers 表');
@@ -151,9 +155,13 @@ export async function getMetricsHistory(db, serverId, hours, columns) {
   let queryHours = hours;
   let intervalMs;
   
-  if (hours > 72) {
-    queryHours = 72;
-    intervalMs = 25 * 60 * 1000;
+  if (hours > 168) {
+    queryHours = 168;
+    intervalMs = 80 * 60 * 1000;
+  } else if (hours >= 96) {
+    intervalMs = 60 * 60 * 1000;
+  } else if (hours >= 48) {
+    intervalMs = 40 * 60 * 1000;
   } else if (hours >= 24) {
     intervalMs = 15 * 60 * 1000;
   } else if (hours >= 12) {
@@ -177,24 +185,78 @@ export async function getMetricsHistory(db, serverId, hours, columns) {
     'cutoff:', new Date(cutoff).toISOString()
   );
 
-  const rawResult = await db.prepare(`
-    WITH sampled AS (
-      SELECT 
-        timestamp, 
-        ${columns},
-        ROW_NUMBER() OVER (
-          PARTITION BY CAST(timestamp / ? AS INTEGER)
-          ORDER BY timestamp
-        ) AS rn
-      FROM metrics_history
-      WHERE server_id = ?
-        AND typeof(timestamp) = 'integer'
-        AND timestamp >= ?
-    )
-    SELECT timestamp, ${columns}
-    FROM sampled
-    WHERE rn = 1
-  `).bind(intervalMs, serverId, cutoff).all();
+  // 判断是否需要查询 metrics_history_old 表
+  // 获取当前月份的第一天 00:00:00 的时间戳
+  const nowDate = new Date(now);
+  const currentMonthStart = new Date(nowDate.getFullYear(), nowDate.getMonth(), 1).getTime();
+  
+  // 如果 cutoff 在当前月份之前，说明需要查询旧表
+  const needOldTable = cutoff < currentMonthStart;
+  // const needOldTable = true;
+  
+  // 检查 metrics_history_old 表是否存在
+  let oldTableExists = false;
+  if (needOldTable) {
+    const oldTable = await db.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_history_old'`
+    ).first();
+    oldTableExists = !!oldTable;
+  }
+
+  let rawResult;
+  
+  if (needOldTable && oldTableExists) {
+    // 跨月查询，使用 UNION ALL
+    console.log('[History] 跨月查询，合并 metrics_history 和 metrics_history_old');
+    
+    rawResult = await db.prepare(`
+      WITH sampled AS (
+        SELECT 
+          timestamp, 
+          ${columns},
+          ROW_NUMBER() OVER (
+            PARTITION BY CAST(timestamp / ? AS INTEGER)
+            ORDER BY timestamp
+          ) AS rn
+        FROM (
+          SELECT timestamp, ${columns} FROM metrics_history
+          WHERE server_id = ?
+            AND typeof(timestamp) = 'integer'
+            AND timestamp >= ?
+          
+          UNION ALL
+          
+          SELECT timestamp, ${columns} FROM metrics_history_old
+          WHERE server_id = ?
+            AND typeof(timestamp) = 'integer'
+            AND timestamp >= ?
+        )
+      )
+      SELECT timestamp, ${columns}
+      FROM sampled
+      WHERE rn = 1
+    `).bind(intervalMs, serverId, cutoff, serverId, cutoff).all();
+  } else {
+    // 单表查询
+    rawResult = await db.prepare(`
+      WITH sampled AS (
+        SELECT 
+          timestamp, 
+          ${columns},
+          ROW_NUMBER() OVER (
+            PARTITION BY CAST(timestamp / ? AS INTEGER)
+            ORDER BY timestamp
+          ) AS rn
+        FROM metrics_history
+        WHERE server_id = ?
+          AND typeof(timestamp) = 'integer'
+          AND timestamp >= ?
+      )
+      SELECT timestamp, ${columns}
+      FROM sampled
+      WHERE rn = 1
+    `).bind(intervalMs, serverId, cutoff).all();
+  }
 
   const result = rawResult.results.map(row => ({
     ...row,
@@ -210,36 +272,47 @@ export async function getMetricsHistory(db, serverId, hours, columns) {
   return result;
 }
 
-export async function cleanupOldData(db) {
+export async function monthlyCleanup(db) {
   try {
-    const now = Date.now();
-    const cleanupInterval = 1 * 24 * 60 * 60 * 1000;
+    console.log('[Cleanup] 开始执行表轮换操作...');
     
-    const stats = {
-      expired: 0,
-      deleted: 0
-    };
+    const siteOptionsResult = await db.prepare('SELECT value FROM settings WHERE key = ?').bind('site_options').first();
+    const siteOptions = siteOptionsResult && siteOptionsResult.value && siteOptionsResult.value.length > 0 
+      ? JSON.parse(siteOptionsResult.value) 
+      : {};
+    siteOptions.cleanup_skip_count = '1';
+    await db.prepare(
+      'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+    ).bind('site_options', JSON.stringify(siteOptions)).run();
+    console.log('cleanup_skip_count set to 1');
+    clearSiteSettingsCache();
     
-    const rawCutoff = now - cleanupInterval;
-    const intDeleteResult = await db.prepare(
-      `DELETE FROM metrics_history WHERE typeof(timestamp) = 'integer' AND timestamp < ?`
-    ).bind(rawCutoff).run();
-    stats.expired = intDeleteResult.meta.changes || 0;
-    stats.deleted += stats.expired;
+    // 1. 删除旧的 metrics_history_old 表（如果存在）
+    await db.prepare(`DROP TABLE IF EXISTS metrics_history_old`).run();
+    console.log('[Cleanup] 已删除旧的 metrics_history_old 表');
     
-    const totalDeleted = stats.deleted;
+    // 2. 将 metrics_history 重命名为 metrics_history_old
+    const currentTable = await db.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='metrics_history'`
+    ).first();
     
-    if (totalDeleted > 0) {
-      console.log(`[Cleanup] 清理 ${totalDeleted} 条过期数据`);
+    if (currentTable) {
+      await db.prepare(`ALTER TABLE metrics_history RENAME TO metrics_history_old`).run();
+      console.log('[Cleanup] 已将 metrics_history 重命名为 metrics_history_old');
     }
+    
+    // 3. 重新初始化数据库以创建新的 metrics_history 表
+    dbInitialized = false;
+    await initDatabase(db);
+
+    console.log('[Cleanup] 已创建新的 metrics_history 表');
     
     return {
       success: true,
-      deleted: totalDeleted,
-      expired: stats.expired
+      message: '表轮换成功'
     };
   } catch (e) {
-    console.error('[Cleanup] 清理数据失败:', e);
+    console.error('[Cleanup] 表轮换失败:', e);
     return { success: false, error: e.message };
   }
 }

@@ -44,8 +44,7 @@
     <div class="global-stats">
       <div class="stat-item">
         <div class="stat-label">{{ trans.totalServers }}</div>
-        <div class="stat-main-value">{{ stats.total }}</div>
-        <div class="stat-sub-info">
+        <div class="stat-main-value stat-main-value-sm stat-sub-info">
           <span class="stat-online-color">{{ trans.online }}:{{ stats.online }}</span> |
           <span class="stat-offline-color">{{ trans.offline }}:{{ stats.offline }}</span>
         </div>
@@ -453,12 +452,15 @@ const loadLeafletCSS = () => {
   }
 }
 
+const isMobile = () => /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || window.innerWidth < 768
+
 const createMap = () => {
+  const mobileView = isMobile()
   window.myMap = window.L.map('map-container', {
     zoomControl: false,
     attributionControl: false,
-    minZoom: 1
-  }).setView([30, 10], 2)
+    minZoom: mobileView ? 1 : 1
+  }).setView(mobileView ? [35, 105] : [30, 10], mobileView ? 1 : 2)
 
   window.L.control.zoom({ position: 'bottomright' }).addTo(window.myMap)
 

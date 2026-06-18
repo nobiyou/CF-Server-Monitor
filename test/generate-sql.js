@@ -61,7 +61,6 @@ function generateMetrics(baseTimestamp, serverIdx, hourOffset) {
 }
 
 const now = Date.now();
-const hoursBack = 72;
 
 const servers = [
   {
@@ -93,6 +92,7 @@ let sql = `-- CF Server Monitor 模拟数据
 
 -- 清空现有数据（注意顺序：先删子表，再删主表）
 DELETE FROM metrics_history;
+DROP TABLE IF EXISTS metrics_history_old;
 DELETE FROM servers;
 DELETE FROM settings;
 
@@ -139,48 +139,120 @@ for (const server of servers) {
 
 sql += `\n-- 生成历史指标数据\n`;
 
-const reportInterval = 60;
+const serverConfigs = [
+  { hoursBack: 24, intervals: [
+      { minutes: 10, interval: 60 },      // 前10分钟: 每分钟
+      { minutes: Infinity, interval: 60 } // 之后: 每10分钟
+    ]},
+  { hoursBack: 24 * 7, intervals: [
+      { minutes: 10, interval: 60 },      // 前10分钟: 每分钟
+      { minutes: 60, interval: 60 }, // 1小时后: 每20分钟
+      { minutes: 120, interval: 200 }, // 2小时后: 每20分钟
+      { minutes: Infinity, interval: 400 } // 之后: 每40分钟
+    ]}
+];
+
+function getInterval(config, minutesBack) {
+  for (const item of config.intervals) {
+    if (minutesBack <= item.minutes) {
+      return item.interval;
+    }
+  }
+  return config.intervals[config.intervals.length - 1].interval;
+}
 
 for (let s = 0; s < servers.length; s++) {
   const server = servers[s];
-  const startTime = now - hoursBack * 60 * 60 * 1000;
+  const config = serverConfigs[s];
+
+  const startTime = now - config.hoursBack * 60 * 60 * 1000;
+
   let latestTs = 0;
   let latestMetrics = null;
-  
-  for (let ts = startTime; ts <= now; ts += reportInterval * 1000) {
-    const hourOffset = (now - ts) / (60 * 60 * 1000);
-    const metrics = generateMetrics(now, s, hourOffset);
-    
-    sql += `INSERT INTO metrics_history (
-      server_id, timestamp, cpu, ram, disk, load_avg,
-      net_in_speed, net_out_speed, net_rx, net_tx,
-      processes, tcp_conn, udp_conn,
-      ping_ct, ping_cu, ping_cm, ping_bd,
-      ram_total, ram_used, swap_total, swap_used,
-      disk_total, disk_used,
-      cpu_cores, cpu_info, arch, os, country, ip_v4, ip_v6, boot_time,
-      net_rx_monthly, net_tx_monthly
-    ) VALUES (
-      '${server.id}', ${ts}, 
-      ${parseFloat(metrics.cpu)}, ${parseFloat(metrics.ram)}, ${parseFloat(metrics.disk)}, '${metrics.load_avg}',
-      ${parseFloat(metrics.net_in_speed)}, ${parseFloat(metrics.net_out_speed)},
-      ${parseFloat(metrics.net_rx)}, ${parseFloat(metrics.net_tx)},
-      ${parseInt(metrics.processes)}, ${parseInt(metrics.tcp_conn)}, ${parseInt(metrics.udp_conn)},
-      ${parseInt(metrics.ping_ct)}, ${parseInt(metrics.ping_cu)}, ${parseInt(metrics.ping_cm)}, ${parseInt(metrics.ping_bd)},
-      ${parseFloat(metrics.ram_total)}, ${parseFloat(metrics.ram_used)},
-      ${parseFloat(metrics.swap_total)}, ${parseFloat(metrics.swap_used)},
-      ${parseFloat(metrics.disk_total)}, ${parseFloat(metrics.disk_used)},
-      ${parseInt(metrics.cpu_cores)}, '${metrics.cpu_info}', '${metrics.arch}', '${metrics.os}', '${metrics.country}', '${metrics.ip_v4}', '${metrics.ip_v6}', '${metrics.boot_time}',
-      ${parseFloat(metrics.net_rx_monthly)}, ${parseFloat(metrics.net_tx_monthly)}
-    );\n`;
-    
+
+  const rows = [];
+
+  let ts = now;
+
+  while (ts >= startTime) {
+
+    const minutesBack = (now - ts) / 60000;
+
+    const intervalSeconds = getInterval(
+      config,
+      minutesBack
+    );
+
+    const hourOffset =
+      (now - ts) / (60 * 60 * 1000);
+
+    const metrics =
+      generateMetrics(now, s, hourOffset);
+
+    rows.push(`
+INSERT INTO metrics_history (
+  server_id, timestamp, cpu, ram, disk, load_avg,
+  net_in_speed, net_out_speed, net_rx, net_tx,
+  processes, tcp_conn, udp_conn,
+  ping_ct, ping_cu, ping_cm, ping_bd,
+  ram_total, ram_used, swap_total, swap_used,
+  disk_total, disk_used,
+  cpu_cores, cpu_info, arch, os, country,
+  ip_v4, ip_v6, boot_time,
+  net_rx_monthly, net_tx_monthly
+) VALUES (
+  '${server.id}',
+  ${ts},
+  ${parseFloat(metrics.cpu)},
+  ${parseFloat(metrics.ram)},
+  ${parseFloat(metrics.disk)},
+  '${metrics.load_avg}',
+  ${parseFloat(metrics.net_in_speed)},
+  ${parseFloat(metrics.net_out_speed)},
+  ${parseFloat(metrics.net_rx)},
+  ${parseFloat(metrics.net_tx)},
+  ${parseInt(metrics.processes)},
+  ${parseInt(metrics.tcp_conn)},
+  ${parseInt(metrics.udp_conn)},
+  ${parseInt(metrics.ping_ct)},
+  ${parseInt(metrics.ping_cu)},
+  ${parseInt(metrics.ping_cm)},
+  ${parseInt(metrics.ping_bd)},
+  ${parseFloat(metrics.ram_total)},
+  ${parseFloat(metrics.ram_used)},
+  ${parseFloat(metrics.swap_total)},
+  ${parseFloat(metrics.swap_used)},
+  ${parseFloat(metrics.disk_total)},
+  ${parseFloat(metrics.disk_used)},
+  ${parseInt(metrics.cpu_cores)},
+  '${metrics.cpu_info}',
+  '${metrics.arch}',
+  '${metrics.os}',
+  '${metrics.country}',
+  '${metrics.ip_v4}',
+  '${metrics.ip_v6}',
+  '${metrics.boot_time}',
+  ${parseFloat(metrics.net_rx_monthly)},
+  ${parseFloat(metrics.net_tx_monthly)}
+);
+`);
+
     if (ts > latestTs) {
       latestTs = ts;
       latestMetrics = metrics;
     }
+
+    ts -= intervalSeconds * 1000;
   }
-  
-  serverLatestMetrics[server.id] = { ts: latestTs, metrics: latestMetrics };
+
+  rows.reverse();
+
+  sql += rows.join('\n');
+
+  serverLatestMetrics[server.id] = {
+    ts: latestTs,
+    metrics: latestMetrics
+  };
 }
 
 const outputPath = path.join(__dirname, 'mock-data.sql');

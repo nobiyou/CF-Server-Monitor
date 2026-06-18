@@ -1,4 +1,4 @@
-import { initDatabase, cleanupOldData, getMetricsHistory, rebuildDatabase } from './database/schema.js';
+import { initDatabase, monthlyCleanup, getMetricsHistory, rebuildDatabase } from './database/schema.js';
 import { checkOfflineNodes } from './services/notification.js';
 import { updateDatabase } from './database/updateDatabase.js';
 import { handleAdminAPI } from './handlers/admin.js';
@@ -16,7 +16,6 @@ import { MetricsBroadcaster as _MetricsBroadcaster }
   from './durable/MetricsBroadcaster.js';
 
 export class MetricsBroadcaster extends _MetricsBroadcaster {}
-
 
 async function getEncryptionKey(env) {
   const secret = env.TURNSTILE_SECRET_KEY || env.API_SECRET || 'default_secret_key_for_turnstile_encryption';
@@ -110,7 +109,8 @@ async function fetchHistoryData(env, request, id, hours, columns, sys = null) {
   const server = await getServerDetail(env.DB, id, isLoggedIn);
   if (!server) return new Response('Not Found', { status: 404 });
   
-  const clampedHours = Math.min(hours, 72);
+  // 最多查询7天数据
+  const clampedHours = Math.min(hours, 168);
   
   const cached = getMetricsHistoryCache(id, clampedHours, columns);
   if (cached && Date.now() - cached.timestamp < 60000) {
@@ -317,10 +317,10 @@ export default {
     const cron = event.cron;
     console.log(`[Cron] 定时任务触发: ${cron}`);
     
-    if (cron === '50 23 * * *') {
-      console.log('[Cron] 开始执行每日数据清理任务');
-      await cleanupOldData(env.DB);
-      console.log('[Cron] 每日数据清理任务完成');
+    if (cron === '* * 1 * *') {
+      console.log('[Cron] 开始执行每月数据清理任务（表轮换）');
+      await monthlyCleanup(env.DB);
+      console.log('[Cron] 每月数据清理任务完成');
     } else if (cron === '*/1 * * * *') {
       console.log('[Cron] 开始执行离线节点检测');
       await checkOfflineNodes(env.DB);

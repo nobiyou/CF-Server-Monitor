@@ -1,7 +1,7 @@
 import { checkAuth, simpleAuthResponse, validateCredentials, generateToken } from '../middleware/auth.js';
-import { clearNotificationSettingsCache } from '../services/notification.js';
 import { getLatestMetricsForAllServers, getAllServers } from '../database/schema.js';
 import { clearServersListCache, clearServerDetailCache } from '../utils/cache.js';
+import { clearSiteSettingsCache } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 
 async function md5Hash(input) {
@@ -199,7 +199,7 @@ export async function handleAdminAPI(request, env, sys) {
       const settings = data.settings || {};
 
       const APPEARANCE_FIELDS = ['site_title', 'custom_bg', 'custom_head', 'custom_script'];
-      const SITE_FIELDS = ['is_public', 'show_price', 'show_expire', 'show_bw', 'show_tf', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'turnstile_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd'];
+      const SITE_FIELDS = ['is_public', 'show_price', 'show_expire', 'show_bw', 'show_tf', 'tg_notify', 'tg_bot_token', 'tg_chat_id', 'turnstile_enabled', 'turnstile_site_key', 'turnstile_secret_key', 'jwt_secret', 'username', 'password', 'custom_ct', 'custom_cu', 'custom_cm', 'custom_bd', 'cleanup_skip_count'];
 
       const appearanceOptions = {};
       for (const field of APPEARANCE_FIELDS) {
@@ -234,9 +234,7 @@ export async function handleAdminAPI(request, env, sys) {
 
       Object.assign(sys, appearanceOptions, siteOptions);
 
-      if (settings && ('tg_notify' in settings || 'tg_bot_token' in settings || 'tg_chat_id' in settings)) {
-        clearNotificationSettingsCache();
-      }
+      clearSiteSettingsCache();
       return new Response(JSON.stringify({ 
         success: true, 
         message: {

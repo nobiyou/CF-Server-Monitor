@@ -556,21 +556,6 @@
 
           <div class="form-row">
             <div class="form-group flex-1">
-              <label class="form-label">{{ trans.reportInterval }}</label>
-              <div class="flex items-center gap-2">
-                <input type="text" readonly :value="reportInterval" class="form-input" style="width: 100px; background-color: var(--bg-secondary);">
-              </div>
-            </div>
-            <div class="form-group flex-1">
-              <label class="form-label">{{ trans.pingMode }}</label>
-              <div class="flex items-center gap-2">
-                <input type="text" readonly :value="pingMode.toUpperCase()" class="form-input" style="width: 100px; background-color: var(--bg-secondary);">
-              </div>
-            </div>
-          </div>
-
-          <div class="form-row">
-            <div class="form-group flex-1">
               <label class="form-label">{{ trans.customCt }}</label>
               <input type="text" name="custom_ct" autocomplete="off" v-model="customCt" class="form-input" placeholder="gd-ct-dualstack.ip.zstaticcdn.com">
             </div>
@@ -593,12 +578,27 @@
 
           <div class="form-row">
             <div class="form-group flex-1">
+              <label class="form-label">{{ trans.reportInterval }}</label>
+              <div class="flex items-center gap-2">
+                <input type="text" readonly :value="reportInterval" class="form-input" style="width: 100px; background-color: var(--bg-secondary);">
+              </div>
+            </div>
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.pingMode }}</label>
+              <div class="flex items-center gap-2">
+                <input type="text" readonly :value="pingMode.toUpperCase()" class="form-input" style="width: 100px; background-color: var(--bg-secondary);">
+              </div>
+            </div>
+            <div class="form-group flex-1">
               <label class="form-label">{{ trans.trafficResetDay }}</label>
               <div class="flex items-center gap-2">
                 <input type="text" readonly :value="resetDay" class="form-input" style="width: 100px; background-color: var(--bg-secondary);">
                 <button @click="openEditModalFromCopy" class="btn btn-icon btn-blue" :title="trans.edit">✏️</button>
               </div>
             </div>
+          </div>
+
+          <div class="form-row">
             <div class="form-group flex-1">
               <label class="form-label">{{ trans.rxCorrection }} (GB)</label>
               <input type="number" name="rx_correction" autocomplete="off" v-model="rxCorrection" class="form-input" placeholder="0" min="0" step="1">

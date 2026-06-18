@@ -279,6 +279,9 @@ const timeOptions = computed(() => {
     { hours: 6, label: '6h' },
     { hours: 12, label: '12h' },
     { hours: 24, label: '24h' },
+    { hours: 48, label: '2d' },
+    { hours: 96, label: '4d' },
+    { hours: 168, label: '7d' },
   ]
 })
 
@@ -647,6 +650,8 @@ const getMaxGapMs = () => {
 }
 
 const applyGapBreak = (data) => {
+  // 超过1小时的数据不使用断点，图表直接连续连接
+  if (currentHours.value > 1) return data
   if (!data || data.length < 2) return data
   
   const maxGapMs = getMaxGapMs()

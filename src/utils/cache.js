@@ -5,7 +5,10 @@
  * - 服务器详情缓存（统一替代 SELECT 1/id/*）
  * - 最新指标缓存
  * - 历史指标缓存
+ * - 站点设置缓存
  */
+
+import { clearSiteSettingsCache } from './settings.js';
 
 const SERVERS_LIST_TTL = 60 * 1000;
 let serversListCache = null;
@@ -143,4 +146,5 @@ export function clearAllCaches() {
   serverDetailCache.clear();
   clearLatestMetricsCache();
   metricsHistoryCache.clear();
+  clearSiteSettingsCache();
 }
